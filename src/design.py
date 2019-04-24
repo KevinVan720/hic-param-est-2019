@@ -27,7 +27,7 @@ import subprocess
 
 import numpy as np
 
-from . import cachedir, parse_system, keys, labels, ranges, design_array, systems
+from . import cachedir, keys, labels, ranges, design_array, observables
 
 
 def generate_lhs(npoints, ndim, seed):
@@ -41,6 +41,7 @@ def generate_lhs(npoints, ndim, seed):
         'npoints = %d, ndim = %d, seed = %d',
         npoints, ndim, seed
     )
+    print("generating maximin LHS")
 
     cachefile = (
         cachedir / 'lhs' /
@@ -69,6 +70,7 @@ def generate_lhs(npoints, ndim, seed):
         )
 
         cachefile.parent.mkdir(exist_ok=True)
+        print("save cache")
         np.save(cachefile, lhs)
 
     return lhs
@@ -104,9 +106,8 @@ class Design:
     project, if not completely rewritten.
 
     """
-    def __init__(self, system, keys=keys, ranges=ranges,labels=labels, array = design_array, npoints=500, validation=False, seed=None):
-        self.system = system
-        self.projectiles, self.beam_energy = parse_system(system)
+    def __init__(self, observables=observables, keys=keys, ranges=ranges,labels=labels, array = design_array, npoints=500, validation=False, seed=None):
+        self.observables= observables
         self.type = 'validation' if validation else 'main'
         
         self.keys = keys
@@ -141,11 +142,10 @@ class Design:
         #   - escape spaces
         #   - surround with $$
         self.labels = [
-            re.sub(r'({[A-Za-z]+})', r'\mathrm\1', i)
+            re.sub(r'({[A-Za-z]+})', r'\\mathrm\\1', i)
             .replace(' ', r'\ ')
             .join('$$')
-            for i in labels
-        ]
+            for i in labels]
 
         self.ndim = len(self.range)
         self.min, self.max = map(np.array, zip(*self.range))
@@ -194,20 +194,6 @@ class Design:
             self.array = array
         #print('Design is')
         #print(self.array)
-        # As it turns out, the minimum for tau_fs (above) was not high
-        # enough.  For reasons I don't quite understand, including low
-        # tau_fs points in the design messes with GP training, leading to
-        # bad predictions (with a smaller length scale, larger noise term,
-        # and lower marginal likelihood).
-        #
-        # I chose this new minimum value by excluding points until GP
-        # training stabilized.  This doesn't really matter because tau_fs
-        # smaller than this is extremely unlikely.
-        #
-        # Future projects like this should definitely NOT reuse this code --
-        # just set good parameter ranges to begin with!
-     #   tau_fs_min = .03
-     #   tau_fs_idx = self.keys.index('tau_fs')
 
      #   if validation:
      #       # Transform etas_slope from arctan space and remove points outside
@@ -287,7 +273,7 @@ class Design:
   #      ]]
   #  )
 
-    def write_files(self, basedir):
+    def write_files(self):
         """
         Write input files for each design point to `basedir`.
 
@@ -335,8 +321,7 @@ class Design:
 #    logging.info('wrote all files to %s', args.inputs_dir)
 #
 #
-#if __name__ == '__main__':
-#    for system in systems:
-#      print('Design is')
-#      print(Design(system).array)
-#
+if __name__ == '__main__':
+    design=Design(npoints=20)
+    design.print_array()
+

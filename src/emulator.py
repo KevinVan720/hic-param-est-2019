@@ -23,7 +23,7 @@ from sklearn.gaussian_process import GaussianProcessRegressor as GPR
 from sklearn.gaussian_process import kernels
 from sklearn.preprocessing import StandardScaler
 
-from . import cachedir, lazydict, observables, data_list#model
+from . import cachedir, lazydict, observables, data_list
 from .design import Design
 
 
@@ -65,30 +65,18 @@ class Emulator:
 
     """
 
-    def __init__(self, system, npc=10, nrestarts=0):
+    def __init__(self, observables=observables, npc=3, nrestarts=0):
         logging.info(
-            'training emulator for system %s (%d PC, %d restarts)',
-            system, npc, nrestarts
+            'training emulator (%d PC, %d restarts)',
+         npc, nrestarts
         )
 
-        Y = []
-        self._slices = {}
         self.observables = observables 
-        # Build an array of all observables to emulate.
-        nobs = 0
-        for obs, subobslist in self.observables:
-            self._slices[obs] = {}
-            for subobs in subobslist:
-                Y.append(data_list[system][obs][subobs]['Y'])
-                n = Y[-1].shape[1]
-                self._slices[obs][subobs] = slice(nobs, nobs + n)
-                nobs += n
 
-        Y = np.concatenate(Y, axis=1)
-        pickle.dump(Y,open('mod_dat.p','wb'))
+        Y = data_list
 
         self.npc = npc
-        self.nobs = nobs
+        self.nobs = len(Y[0])
         self.scaler = StandardScaler(copy=False)
         self.pca = PCA(copy=False, whiten=True, svd_solver='full')
 
@@ -98,7 +86,7 @@ class Emulator:
 
         # Define kernel (covariance function):
         # Gaussian correlation (RBF) plus a noise term.
-        design = Design(system)
+        design = Design()
 
        # design = joblib.load(filename='cache/lhs/design_s.p')
        # maxes = np.apply_along_axis(max,0,design)
@@ -153,37 +141,38 @@ class Emulator:
 
         # Compute the partial transformation for the first `npc` components
         # that are actually emulated.
-        A = self._trans_matrix[:npc]
+        A = self._trans_matrix[:self.npc]
+        print(A)
         self._var_trans = np.einsum(
-            'ki,kj->kij', A, A, optimize=False).reshape(npc, nobs**2)
+            'ki,kj->kij', A, A, optimize=False).reshape(self.npc, self.nobs**2)
 
         # Compute the covariance matrix for the remaining neglected PCs
         # (truncation error).  These components always have variance == 1.
-        B = self._trans_matrix[npc:]
+        B = self._trans_matrix[self.npc:]
         self._cov_trunc = np.dot(B.T, B)
 
         # Add small term to diagonal for numerical stability.
-        self._cov_trunc.flat[::nobs + 1] += 1e-4 * self.scaler.var_
+        self._cov_trunc.flat[::self.nobs + 1] += 1e-4 * self.scaler.var_
 
     @classmethod
-    def from_cache(cls, system, retrain=False, **kwargs):
+    def from_cache(cls, retrain=False, **kwargs):
         """
         Load the emulator for `system` from the cache if available, otherwise
         train and cache a new instance.
 
         """
-        cachefile = cachedir / 'emulator' / '{}.pkl'.format(system)
+        cachefile = cachedir / 'emulator' / 'emulator.pkl'
 
         # cache the __dict__ rather than the Emulator instance itself
         # this way the __name__ doesn't matter, e.g. a pickled
         # __main__.Emulator can be unpickled as a src.emulator.Emulator
         if not retrain and cachefile.exists():
-            logging.debug('loading emulator for system %s from cache', system)
+            logging.debug('loading emulator for system %s from cache')
             emu = cls.__new__(cls)
             emu.__dict__ = joblib.load(cachefile)
             return emu
 
-        emu = cls(system, **kwargs)
+        emu = cls(**kwargs)
 
         logging.info('writing cache file %s', cachefile)
         cachefile.parent.mkdir(exist_ok=True)
@@ -203,12 +192,7 @@ class Emulator:
         Y = np.dot(Z, self._trans_matrix[:Z.shape[-1]])
         Y += self.scaler.mean_
 
-        return {
-            obs: {
-                subobs: Y[..., s]
-                for subobs, s in slices.items()
-            } for obs, slices in self._slices.items()
-        }
+        return Y
 
     def predict(self, X, return_cov=False, extra_std=0):
         """
@@ -275,7 +259,7 @@ class Emulator:
             )
             cov += self._cov_trunc
 
-            return mean, _Covariance(cov, self._slices)
+            return mean, cov
         else:
             return mean
 
@@ -303,16 +287,16 @@ class Emulator:
         )
 
 
-emulators = lazydict(Emulator.from_cache)
+emulators = Emulator.from_cache()
 
 
 if __name__ == '__main__':
     import argparse
-    from . import systems
-    def arg_to_system(arg):
-        if arg not in systems:
-            raise argparse.ArgumentTypeError(arg)
-        return arg
+    #from . import systems
+    #def arg_to_system(arg):
+    #    if arg not in systems:
+    #       raise argparse.ArgumentTypeError(arg)
+    #   return arg
 
     parser = argparse.ArgumentParser(
         description='train emulators for each collision system',
@@ -332,28 +316,27 @@ if __name__ == '__main__':
         '--retrain', action='store_true',
         help='retrain even if emulator is cached'
     )
-    parser.add_argument(
-        'systems', nargs='*', type=arg_to_system,
-        default=systems, metavar='SYSTEM',
-        help='system(s) to train'
-    )
+    #parser.add_argument(
+    #    'systems', nargs='*', type=arg_to_system,
+    #    default=systems, metavar='SYSTEM',
+    #   help='system(s) to train'
+    #)
 
     args = parser.parse_args()
     kwargs = vars(args)
 
-    for s in kwargs.pop('systems'):
-        emu = Emulator.from_cache(s, **kwargs)
+    emu = Emulator.from_cache( **kwargs)
 
-        print(s)
-        print('{} PCs explain {:.5f} of variance'.format(
+    print()
+    print('{} PCs explain {:.5f} of variance'.format(
             emu.npc,
             emu.pca.explained_variance_ratio_[:emu.npc].sum()
         ))
 
-        for n, (evr, gp) in enumerate(zip(
-                emu.pca.explained_variance_ratio_, emu.gps
-        )):
-            print(
-                'GP {}: {:.5f} of variance, LML = {:.5g}, kernel: {}'
-                .format(n, evr, gp.log_marginal_likelihood_value_, gp.kernel_)
-            )
+    for n, (evr, gp) in enumerate(zip(
+            emu.pca.explained_variance_ratio_, emu.gps
+    )):
+        print(
+            'GP {}: {:.5f} of variance, LML = {:.5g}, kernel: {}'
+            .format(n, evr, gp.log_marginal_likelihood_value_, gp.kernel_)
+        )

@@ -33,7 +33,7 @@ import h5py
 import numpy as np
 from scipy.linalg import lapack
 from sklearn.externals import joblib
-from . import workdir, systems, observables, exp_data_list, exp_cov#, expt
+from . import workdir, systems, observables, exp_data_list, exp_data_param_list, exp_cov#, expt
 from .design import Design
 from .emulator import emulators
 import pickle
@@ -41,8 +41,7 @@ from scipy.stats import multivariate_normal
 
 
 
-def cov(
-        system, obs1, subobs1, obs2, subobs2,
+def cov(obs1, obs2,
         stat_frac=1e-4, sys_corr_length=100, cross_factor=.8,
         corr_obs={
             frozenset({'dNch_deta', 'dET_deta', 'dN_dy'}),
@@ -73,24 +72,15 @@ def cov(
     since they are all related to particle / energy production.
 
     """
-    def unpack(obs, subobs):
-        dset = exp_data_list[system][obs][subobs]
-        yerr = dset['yerr']
 
-        try:
-            stat = yerr['stat']
-            sys = yerr['sys']
-        except KeyError:
-            stat = dset['y'] * stat_frac
-            sys = yerr['sum']
+    stat1, sys1 = (exp_data_list[obs1,1],exp_data_list[obs1,2])
+    stat2, sys2 = (exp_data_list[obs2,1],exp_data_list[obs2,2])
 
-        return dset['x'], stat, sys
-
-    x1, stat1, sys1 = unpack(obs1, subobs1)
-    x2, stat2, sys2 = unpack(obs2, subobs2)
+    x1 = exp_data_param_list[obs1]
+    x2 = exp_data_param_list[obs2]
 
     if obs1 == obs2:
-        same_obs = (subobs1 == subobs2)
+        same_obs = True
     else:
         # check if obs are both in a correlated group
         if any({obs1, obs2} <= c for c in corr_obs):
@@ -99,6 +89,7 @@ def cov(
             return np.zeros((x1.size, x2.size))
 
     # compute the sys error covariance
+    #TODO: to de modified in the future
     C = (
         np.exp(-.5*(np.subtract.outer(x1, x2)/sys_corr_length)**2) *
         np.outer(sys1, sys2)
@@ -202,16 +193,15 @@ class Chain:
         #  - all other physical parameters (same for all systems)
         #  - model sys error
         def keys_labels_range():
-            for sys in systems:
-                d = Design(sys)
-                klr = zip(d.keys, d.labels, d.range)
-                k, l, r = next(klr)
-                #assert k == 'lambda_jet'
-                yield (
-                    '{} {}'.format(k, sys),
-                    '{}\n{:.2f} TeV'.format(l, d.beam_energy/1000),
-                    r
-                )
+            d = Design()
+            klr = zip(d.keys, d.labels, d.range)
+            k, l, r = next(klr)
+            #assert k == 'lambda_jet'
+            yield (
+                '{}'.format(k),
+                '{}\n'.format(l),
+                r
+            )
 
             yield from klr
 
@@ -223,59 +213,31 @@ class Chain:
         self.ndim = len(self.range)
         self.min, self.max = map(np.array, zip(*self.range))
 
-        self._common_indices = list(range(len(systems), self.ndim))
-
-        self._slices = {}
-        self._expt_y = {}
-        self._expt_cov = {}
+        self._expt_y = []
+        self._expt_cov = []
         self.observables = observables
         # pre-compute the experimental data vectors and covariance matrices
-        for sys, sysdata in exp_data_list.items():
-            nobs = 0
-
-            self._slices[sys] = []
-
-            for obs, subobslist in self.observables:
-                try:
-                    obsdata = sysdata[obs]
-                except KeyError:
-                    continue
-
-                for subobs in subobslist:
-                    try:
-                        dset = obsdata[subobs]
-                    except KeyError:
-                        continue
-
-                    n = dset['y'].size
-                    self._slices[sys].append(
-                        (obs, subobs, slice(nobs, nobs + n))
-                    )
-                    nobs += n
-            self._expt_y[sys] = np.empty(nobs)
-            self._expt_cov[sys] = np.empty((nobs, nobs))
-
-            for obs1, subobs1, slc1 in self._slices[sys]:
-                self._expt_y[sys][slc1] = exp_data_list[sys][obs1][subobs1]['y']
-                for obs2, subobs2, slc2 in self._slices[sys]:
-                    self._expt_cov[sys][slc1, slc2] = cov(
-                        sys, obs1, subobs1, obs2, subobs2
-                    )
+        for i in range(len(exp_data_list)):
+            self._expt_y.append(exp_data_list[i,0])
+            tempcov=[]
+            for j in range(len(exp_data_list)):
+                tempcov.append(cov(i,j))
+            self._expt_cov.append(tempcov)
             #Allows user to specify experimental covariance matrix in __init__.py
-            if exp_cov is not None:
-                self._expt_cov[sys] = exp_cov
+        if exp_cov is not None:
+            self._expt_cov = exp_cov
+        self._expt_y = np.array(self._expt_y)
+        self._expt_cov = np.array(self._expt_cov)
+
     def _predict(self, X, **kwargs):
         """
         Call each system emulator to predict model output at X.
 
         """
-        return {
-            sys: emulators[sys].predict(
+        return emulators.predict(
                 X[:, ],#[n] + self._common_indices],
                 **kwargs
             )
-            for n, sys in enumerate(systems)
-        }
 
     def log_posterior(self, X, extra_std_prior_scale=0.05, model_sys_error = False):
         """
@@ -298,6 +260,8 @@ class Chain:
 
         nsamples = np.count_nonzero(inside)
 
+        print('nsamples:', nsamples)
+
         if nsamples > 0:
             if model_sys_error:
                 extra_std = X[inside, -1]
@@ -308,29 +272,33 @@ class Chain:
                 X[inside], return_cov=True, extra_std=extra_std
             )
 
-            for sys in systems:
-                nobs = self._expt_y[sys].size
-                # allocate difference (model - expt) and covariance arrays
-                dY = np.empty((nsamples, nobs))
-                cov = np.empty((nsamples, nobs, nobs))
+            
+            nobs = len(self._expt_y)
+            # allocate difference (model - expt) and covariance arrays
+            dY = np.empty((nsamples, nobs))
+            cov = np.empty((nsamples, nobs, nobs))
 
-                model_Y, model_cov = pred[sys]
+            model_Y, model_cov = pred
 
-                # copy predictive mean and covariance into allocated arrays
-                for obs1, subobs1, slc1 in self._slices[sys]:
-                    dY[:, slc1] = model_Y[obs1][subobs1]
-                    for obs2, subobs2, slc2 in self._slices[sys]:
-                        cov[:, slc1, slc2] = \
-                            model_cov[(obs1, subobs1), (obs2, subobs2)]
+            #print(model_Y.shape)
+            #print(model_cov.shape)
+            #print(self._expt_y.shape)
 
-                # subtract expt data from model data
-                dY -= self._expt_y[sys]
+            # copy predictive mean and covariance into allocated arrays
+            for sample in range(nsamples):
+                for i in range(nobs):
+                    dY[sample, i] = model_Y[sample, i]-self._expt_y[i]
+                    for j in range(nobs):
+                        cov[sample, i,j] = model_cov[sample, i,j]+self._expt_cov[i,j]
 
-                # add expt cov to model cov
-                cov += self._expt_cov[sys]
+            # subtract expt data from model data
+            #dY -= self._expt_y
 
-                # compute log likelihood at each point
-                lp[inside] += list(map(mvn_loglike, dY, cov))
+            # add expt cov to model cov
+            #cov += self._expt_cov
+
+            # compute log likelihood at each point
+            lp[inside] += list(map(mvn_loglike, dY, cov))
 
             # add prior for extra_std (model sys error)
             if model_sys_error:
@@ -380,6 +348,8 @@ class Chain:
             else:
                 burn = False
                 nwalkers = dset.shape[0]
+
+            print(nwalkers)
 
             sampler = LoggingEnsembleSampler(
                 nwalkers, self.ndim, self.log_posterior, pool=self
