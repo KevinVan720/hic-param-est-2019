@@ -33,7 +33,7 @@ import h5py
 import numpy as np
 from scipy.linalg import lapack
 from sklearn.externals import joblib
-from . import workdir, systems, observables, exp_data_list, exp_data_param_list, exp_cov#, expt
+from . import workdir, observables, exp_data_list, exp_data_param_list, exp_cov#, expt
 from .design import Design
 from .emulator import emulators
 import pickle
@@ -77,7 +77,12 @@ def cov(obs1, obs2,
     stat2, sys2 = (exp_data_list[obs2,1],exp_data_list[obs2,2])
 
     x1 = exp_data_param_list[obs1]
+    x1 = np.array([x for x in x1 if x is not None])
     x2 = exp_data_param_list[obs2]
+    x2 = np.array([x for x in x2 if x is not None])
+
+    #print(x1)
+    #print(x2)
 
     if obs1 == obs2:
         same_obs = True

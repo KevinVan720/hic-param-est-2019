@@ -26,14 +26,41 @@ cachedir.mkdir(parents=True, exist_ok=True)
 #: such as ``'PbPb2760'``, ``'AuAu200'``, ``'pPb5020'``.
 #: Even if the project uses only a single system,
 #: this should still be a list of one system string.
-systems = ['PbPb5020']
+#systems = ['PbPb5020']
 
-observables=['obs:R_AA-sys:PbPb5020-pT:10.8',
-            'obs:R_AA-sys:PbPb5020-pT:13.2',
-            'obs:R_AA-sys:PbPb5020-pT:16.8',
-            'obs:R_AA-sys:PbPb5020-pT:21.6',
-            'obs:R_AA-sys:PbPb5020-pT:32.0']
+#observables=['obs:R_AA-sys:PbPb5020-pT:10.8',
+#            'obs:R_AA-sys:PbPb5020-pT:13.2',
+#            'obs:R_AA-sys:PbPb5020-pT:16.8',
+#            'obs:R_AA-sys:PbPb5020-pT:21.6',
+#            'obs:R_AA-sys:PbPb5020-pT:32.0']
 
+def parse_obs(observables):
+    keys=[]
+    for obs in observables:
+        tempkeys=obs[2]
+        for temp in tempkeys:
+            if temp not in keys:
+                keys.append(temp)
+    
+    for obs in observables:
+        tempkeys=obs[2]
+        parsed_dict={}
+        for key in keys:
+            if key not in tempkeys.keys():
+                parsed_dict[key]=None
+            else:
+                parsed_dict[key]=tempkeys[key]
+        obs[2]=parsed_dict
+    
+    return keys
+
+observables=[['R_AA', {'sys': 'pbpb5020'}, {'pT': 10.8}],
+['R_AA', {'sys': 'pbpb5020'}, {'pT': 13.2}],
+['R_AA', {'sys': 'pbpb5020'}, {'pT': 16.8}],
+['R_AA', {'sys': 'pbpb5020'}, {'pT': 21.6}],
+['R_AA', {'sys': 'pbpb5020'}, {'pT': 32.0}]]
+
+parse_obs(observables)
 
 #: Design attribute. This is a list of 
 #: strings describing the inputs.
@@ -62,7 +89,8 @@ design_array = pickle.load((cachedir / 'lhs/design_s.p').open('rb'))
 #:
 #:     'x' is a (1 x p) numpy array of numeric index of columns of Y (if exists). In the example data, x is p_T. 
 #: This MUST be changed from None - no built-in default exists. Uncomment the line below default for example.
-data_list = np.array([[0.668, 0.71 , 0.764, 0.809, 0.832],
+data_list = np.array([
+       [0.668, 0.71 , 0.764, 0.809, 0.832],
        [0.338, 0.382, 0.443, 0.507, 0.558],
        [0.21 , 0.246, 0.304, 0.358, 0.405],
        [0.327, 0.363, 0.42 , 0.476, 0.509],
@@ -104,7 +132,7 @@ data_list_val = None
 #:
 #:      'sys' is a (1 x p) array of systematic errors.
 #: This MUST be changed from None - no built-in default exists. Uncomment the line below default for example.
-exp_data_param_list=np.array([[10.8],[13.2],[16.8],[21.6],[32.0]])
+exp_data_param_list=np.array([list(obs[2].values()) for obs in observables])
 exp_data_list = np.array([[0.457, 0.0409, 0.00150],
 [0.506, 0.0454, 0.0021],
 [0.557, 0.0477, 0.0041],
@@ -126,13 +154,21 @@ exp_cov = np.array([[0.00117728, 0.00140226, 0.00155336, 0.00162377, 0.001733],
 #: ``(obs, [list of subobs])``.
 #observables = [('R_AA',[None])]
 
-def parse_system(system):
+def find_obs_index(obs, **kwargs):
     """
     Parse a system string into a pair of projectiles and a beam energy.
 
     """
-    match = re.fullmatch('([A-Z]?[a-z])([A-Z]?[a-z])([0-9]+)', system)
-    return match.group(1, 2), int(match.group(3))
+    rst=[]
+    for i in range(len(observables)):
+        ismatch=True
+        for (key, value) in kwargs.items():
+            if observables[i][1].get(key) != value:
+                ismatch=False
+        if ismatch==True:
+            rst.append(i)
+
+    return rst
 
 
 class lazydict(dict):

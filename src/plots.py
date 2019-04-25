@@ -40,7 +40,7 @@ from sklearn.gaussian_process import kernels
 from sklearn.mixture import GaussianMixture
 from functools import wraps
 
-from . import workdir, mcmc, data_list, exp_data_list#, data_list_val#, model, expt
+from . import workdir, mcmc, find_obs_index, data_list, exp_data_param_list, exp_data_list#, data_list_val#, model, expt
 from .design import Design
 from .emulator import emulators
 
@@ -297,7 +297,31 @@ def posterior():
     """
     _posterior( scale=1.6, padr=1., padt=.99)
 
+@plot
+def design_exp_compare(obs,**kwargs):
+    index=find_obs_index(obs, **kwargs)
+    x=exp_data_param_list[index]
+    print(x)
+    y=exp_data_list[index,0]
+    print(y)
+    plt.plot(x, y, color='black', marker='o', linewidth=2, markersize=12)
+    design_y = data_list[:,index]
+    for y in design_y:
+        plt.plot(x,y)
+    plt.ylim((0,1))
 
+@plot
+def model_exp_compare(obs,**kwargs):
+    index=find_obs_index(obs, **kwargs)
+    x=exp_data_param_list[index]
+    print(x)
+    y=exp_data_list[index,0]
+    print(y)
+    plt.plot(x, y, color='black', marker='o', linewidth=2, markersize=12)
+    samples = mcmc.Chain().samples(100)
+    for y in samples:
+        plt.plot(x,y)
+    plt.ylim((0,1))
 
 if __name__ == '__main__':
     import argparse
